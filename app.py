@@ -21,27 +21,48 @@ with st.sidebar:
 
     df_lazy = pl.scan_parquet(f"{DATA_DIR}/symbol={selected_symbol}/*.parquet")
 
-    unique_strikes = df_lazy.select(pl.col("strike")).unique().sort(by="strike").collect()
-    unique_expirations = df_lazy.select(pl.col("expiration")).unique().sort(by="expiration").collect()
+    filter_mode = st.radio("By:", ["Strike", "Delta"])
 
+    if filter_mode == "Strike":
+        unique_strikes = df_lazy.select(pl.col("strike")).unique().sort(by="strike").collect()
+        strike = st.selectbox("Choose strike:", unique_strikes["strike"].to_list())
+    else:
+        # Numeric input for delta (10-90, default 25)
+        delta_input = st.number_input("Choose delta", min_value=10, max_value=90, value=25, step=1)
+        delta_input = delta_input / 100.0  # convert to decimal
+
+    unique_expirations = df_lazy.select(pl.col("expiration")).unique().sort(by="expiration").collect()
     # display unique strikes and expirations  as dropdowns in sorted order
-    strike = st.selectbox("Choose strike:", unique_strikes["strike"].to_list())
     expiration = st.selectbox("Choose expiration:", unique_expirations["expiration"].to_list())
 
 # -------------------
 # Main Area (Right side)
 # -------------------
-dt_list = (
-    df_lazy
-    # .filter(pl.col("dt") == "2025-10-01")
-    # .filter(pl.col("symbol") == selected_symbol)
-    .filter(pl.col("strike") == strike)
-    .filter(pl.col("expiration") == expiration)
-    .with_columns(
+
+df_lazy = df_lazy.filter(pl.col("expiration") == expiration).with_columns(
         (pl.col("iv") * 100).alias("iv_percent")
     )
-    .collect()  # triggers computation
-)
+
+if filter_mode == "Delta":
+    # 1. Add a column with the absolute difference to user input
+    df_lazy = df_lazy.with_columns(
+        (pl.col("delta").abs() - delta_input).abs().alias("delta_diff")
+    )
+
+    # 2. For each day, pick the row with the minimal delta_diff
+    df_lazy = (
+        df_lazy.group_by(["dt", "option_type"])  # group by day and option type
+        .agg(
+            pl.all().sort_by("delta_diff").first()  # pick the row with min delta_diff per day
+        )
+    )
+else:
+    df_lazy = df_lazy.filter(pl.col("strike") == strike)
+
+dt_list = df_lazy.sort(
+    by=["dt", "option_type"], 
+    descending=[True, False]  # True = descending, False = ascending
+).collect()
 
 st.subheader("Query Result Table")
 st.dataframe(dt_list, use_container_width=True, column_config={
