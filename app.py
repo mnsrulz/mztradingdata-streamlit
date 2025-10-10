@@ -92,3 +92,10 @@ chart = alt.Chart(dt_list).mark_line().encode(
 ).interactive()
 
 st.altair_chart(chart, use_container_width=True)
+
+# Display build info at the bottom
+build_time = os.getenv("BUILD_TIME", "unknown")
+git_sha = os.getenv("GIT_SHA", "unknown")
+
+st.markdown("---")  # horizontal separator
+st.caption(f"Build time: {build_time} | Git SHA: {git_sha}")

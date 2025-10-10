@@ -10,6 +10,12 @@ COPY . /app
 
 ENV STREAMLIT_BASE_URL=/
 
+ARG BUILD_TIME
+ARG GIT_SHA
+
+ENV BUILD_TIME=$BUILD_TIME
+ENV GIT_SHA=$GIT_SHA
+
 EXPOSE 8501
 # Run Streamlit using the env var for baseUrlPath
 CMD streamlit run app.py \
