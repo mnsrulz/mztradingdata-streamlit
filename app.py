@@ -1,7 +1,9 @@
+import pandas as pd
 import streamlit as st
 import polars as pl
 import os
 import altair as alt
+import yfinance as yf
 from datetime import date
 
 # Read from environment variable, with a fallback default
@@ -18,7 +20,14 @@ st.set_page_config(
 
 with st.sidebar:
     # Symbol filter
-    selected_symbol = st.text_input("Enter symbol", "AAPL").upper()
+    
+    symbols = sorted([
+        d.split("=")[1]
+        for d in os.listdir(DATA_DIR)
+        if d.startswith("symbol=")
+    ])
+    selected_symbol = st.selectbox("Choose a Symbol:", symbols)
+    # selected_symbol = st.text_input("Enter symbol", "AAPL").upper()
 
     df_lazy = pl.scan_parquet(f"{DATA_DIR}/symbol={selected_symbol}/*.parquet")
 
@@ -41,22 +50,23 @@ with st.sidebar:
         df_lazy = df_lazy.filter(pl.col("option_symbol") == option_symbol)
 
     show_weekly = st.checkbox("Show weekly options", value=False)    
+    monthly_expiries = unique_expirations.with_columns([
+        pl.col("expiration").dt.year().alias("year"),
+        pl.col("expiration").dt.month().alias("month"),
+        pl.col("expiration").dt.week().alias("week"),
+        (
+            (pl.col("expiration").dt.day() >= 15) &
+            (pl.col("expiration").dt.day() <= 21)
+        ).alias("is_third_week")
+    ])
+    monthly_expiries = (
+        monthly_expiries.filter(pl.col("is_third_week")).group_by(["year", "month", "week"])
+            .agg(pl.col("expiration").max().alias("expiration"))
+            .select("expiration")
+            .sort("expiration")
+    )
     if not show_weekly:
-        unique_expirations = unique_expirations.with_columns([
-            pl.col("expiration").dt.year().alias("year"),
-            pl.col("expiration").dt.month().alias("month"),
-            pl.col("expiration").dt.week().alias("week"),
-            (
-                (pl.col("expiration").dt.day() >= 15) &
-                (pl.col("expiration").dt.day() <= 21)
-            ).alias("is_third_week")
-        ])
-        unique_expirations = (
-            unique_expirations.filter(pl.col("is_third_week")).group_by(["year", "month", "week"])
-                .agg(pl.col("expiration").max().alias("expiration"))
-                .select("expiration")
-                .sort("expiration")
-        )
+        unique_expirations = monthly_expiries
 
         # Today's date
     today = date.today()
@@ -119,7 +129,7 @@ dt_list = df_lazy.sort(
 
 if show_table:
     st.subheader("Query Result Table")
-    st.dataframe(dt_list, use_container_width=True, column_config={
+    st.dataframe(dt_list, width="stretch", column_config={
             "dt": st.column_config.DatetimeColumn(
                 "Date", 
                 format="YYYY-MM-DD",  # only show the date
@@ -130,44 +140,85 @@ if show_table:
             )        
         })  # scrollable, interactive table
 
-# df_pivot = dt_list.pivot(index="dt", columns="option_type", values="iv")
-
-# st.line_chart(df_pivot)
-
 # Multi-line chart by option_type
-iv_chart = alt.Chart(dt_list).mark_line().encode(
-    x="dt:T",
+iv_chart = alt.Chart(dt_list).mark_line().encode(    
+    alt.X('dt:T', axis=alt.Axis(format='%m/%d', labelAngle=-45), title='Date'),
     y="iv_percent:Q",
     color=alt.Color("option_type:N", legend=alt.Legend(
         orient="top", title="Option Type", titleAnchor="start"
     ), 
-    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"]),   
-    ),   
-    tooltip=[
-        alt.Tooltip("dt:T", title="Date"), "option_type",
-        alt.Tooltip("iv_percent:Q", title="IV (%)", format=".2f")  # 2 decimal places
-    ]
-).interactive()
+    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"]))
+)#.interactive()
 
-st.subheader("Implied Volatility over time")
+# Define a hover parameter (selection)
+hover = alt.selection_point(
+    fields=['dt'],
+    nearest=True,
+    on='mouseover',
+    empty='none'
+)
+
+# Pivot so each date has Call and Put in one row
+dt_wide = dt_list.pivot(
+    values=['iv_percent', 'mid_price'],
+    index='dt',
+    on='option_type'    
+)
+
+# Polars pivot returns columns like ['dt', 'C', 'P']
+# Convert to Pandas for Altair
+dt_wide_pd = dt_wide.to_pandas()
+
+# st.dataframe(dt_wide_pd, use_container_width=True)
+
+# Vertical line at hover
+vertical_line_iv = alt.Chart(dt_wide_pd).mark_rule(color='gray').encode(
+    x='dt:T',
+    opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
+    tooltip=[
+        alt.Tooltip('dt:T', title='Date'),
+        alt.Tooltip('iv_percent_C:Q', title='Call IV (%)', format=".2f"),
+        alt.Tooltip('iv_percent_P:Q', title='Put IV (%)', format=".2f")
+    ]
+).add_params(
+    hover
+)
+
+# Vertical line at hover
+vertical_line_mid_price = alt.Chart(dt_wide_pd).mark_rule(color='gray').encode(
+    x='dt:T',
+    opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
+    tooltip=[
+        alt.Tooltip('dt:T', title='Date'),
+        alt.Tooltip('mid_price_C:Q', title='Call Mid Price', format=".2f"),
+        alt.Tooltip('mid_price_P:Q', title='Put Mid Price', format=".2f")
+    ]
+).add_params(
+    hover
+)
+
+iv_chart = iv_chart + vertical_line_iv
+
+st.subheader("Options Implied Volatility over time")
 st.altair_chart(iv_chart, use_container_width=True)
 
 # Multi-line for pricing
 mid_price_chart = alt.Chart(dt_list).mark_line().encode(
-    x="dt:T",
+    alt.X('dt:T', axis=alt.Axis(format='%m/%d', labelAngle=-45), title='Date'),
     y="mid_price:Q",
     color=alt.Color("option_type:N", legend=alt.Legend(
         orient="top", title="Option Type", titleAnchor="start"
     ),
-    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"])),   
-    tooltip=[
-        alt.Tooltip("dt:T", title="Date"), "option_type",
-        alt.Tooltip("mid_price:Q", title="Mid Price", format=".2f")  # 2 decimal places
-    ]
-).interactive()
+    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"]))
+)#.interactive()
 
-st.subheader("Pricing over time")
+mid_price_chart = mid_price_chart + vertical_line_mid_price
+
+st.subheader("Options Pricing over time")
 st.altair_chart(mid_price_chart, use_container_width=True)
+
+# combined_chart = iv_chart & mid_price_chart
+# st.altair_chart(combined_chart, use_container_width=True)
 
 # Display build info at the bottom
 build_time = os.getenv("BUILD_TIME", "unknown")
