@@ -1,10 +1,9 @@
-import pandas as pd
 import streamlit as st
 import polars as pl
 import os
-import altair as alt
-import yfinance as yf
-from datetime import date
+from datetime import date, timedelta
+
+from utils.utils import render_footer
 
 # Read from environment variable, with a fallback default
 DATA_DIR = os.getenv("DATA_DIR", "/mnt/c/ws/consolidated-data-by-symbol")
@@ -99,6 +98,13 @@ with st.sidebar:
 # -------------------
 # Main Area (Right side)
 # -------------------
+periodOptions = ["1mo", "3mo", "6mo", "1y", "ytd", "max"]
+periodOptionsDays = [30, 90, 180, 365, date.today().timetuple().tm_yday, 99999]
+
+timeframe = st.segmented_control("Timeframe", options=periodOptions, default="6mo", selection_mode="single")
+days_worth = periodOptionsDays[periodOptions.index(timeframe)]
+
+df_lazy = df_lazy.filter(pl.col("dt") >= (date.today() - timedelta(days=days_worth)))
 
 df_lazy = df_lazy.filter(pl.col("expiration") == expiration).with_columns(
         (pl.col("iv") * 100).alias("iv_percent")
@@ -140,24 +146,6 @@ if show_table:
             )        
         })  # scrollable, interactive table
 
-# Multi-line chart by option_type
-iv_chart = alt.Chart(dt_list).mark_line().encode(    
-    alt.X('dt:T', axis=alt.Axis(format='%m/%d', labelAngle=-45), title='Date'),
-    y="iv_percent:Q",
-    color=alt.Color("option_type:N", legend=alt.Legend(
-        orient="top", title="Option Type", titleAnchor="start"
-    ), 
-    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"]))
-)#.interactive()
-
-# Define a hover parameter (selection)
-hover = alt.selection_point(
-    fields=['dt'],
-    nearest=True,
-    on='mouseover',
-    empty='none'
-)
-
 # Pivot so each date has Call and Put in one row
 dt_wide = dt_list.pivot(
     values=['iv_percent', 'mid_price'],
@@ -169,60 +157,11 @@ dt_wide = dt_list.pivot(
 # Convert to Pandas for Altair
 dt_wide_pd = dt_wide.to_pandas()
 
-# st.dataframe(dt_wide_pd, use_container_width=True)
-
-# Vertical line at hover
-vertical_line_iv = alt.Chart(dt_wide_pd).mark_rule(color='gray').encode(
-    x='dt:T',
-    opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
-    tooltip=[
-        alt.Tooltip('dt:T', title='Date'),
-        alt.Tooltip('iv_percent_C:Q', title='Call IV (%)', format=".2f"),
-        alt.Tooltip('iv_percent_P:Q', title='Put IV (%)', format=".2f")
-    ]
-).add_params(
-    hover
-)
-
-# Vertical line at hover
-vertical_line_mid_price = alt.Chart(dt_wide_pd).mark_rule(color='gray').encode(
-    x='dt:T',
-    opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
-    tooltip=[
-        alt.Tooltip('dt:T', title='Date'),
-        alt.Tooltip('mid_price_C:Q', title='Call Mid Price', format=".2f"),
-        alt.Tooltip('mid_price_P:Q', title='Put Mid Price', format=".2f")
-    ]
-).add_params(
-    hover
-)
-
-iv_chart = iv_chart + vertical_line_iv
 
 st.subheader("Options Implied Volatility over time")
-st.altair_chart(iv_chart, use_container_width=True)
+st.line_chart(dt_list, x='dt', y='iv_percent', color="option_type")
 
-# Multi-line for pricing
-mid_price_chart = alt.Chart(dt_list).mark_line().encode(
-    alt.X('dt:T', axis=alt.Axis(format='%m/%d', labelAngle=-45), title='Date'),
-    y="mid_price:Q",
-    color=alt.Color("option_type:N", legend=alt.Legend(
-        orient="top", title="Option Type", titleAnchor="start"
-    ),
-    scale=alt.Scale(domain=["C", "P"], range=["#006E09", "#e2403a"]))
-)#.interactive()
+st.subheader("Options Mid Price over time")
+st.line_chart(dt_list, x='dt', y='mid_price', color='option_type')
 
-mid_price_chart = mid_price_chart + vertical_line_mid_price
-
-st.subheader("Options Pricing over time")
-st.altair_chart(mid_price_chart, use_container_width=True)
-
-# combined_chart = iv_chart & mid_price_chart
-# st.altair_chart(combined_chart, use_container_width=True)
-
-# Display build info at the bottom
-build_time = os.getenv("BUILD_TIME", "unknown")
-git_sha = os.getenv("GIT_SHA", "unknown")
-
-st.markdown("---")  # horizontal separator
-st.caption(f"Build time: {build_time} | Git SHA: {git_sha}")
+render_footer()

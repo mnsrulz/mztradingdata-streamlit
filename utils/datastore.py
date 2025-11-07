@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-DATA_FILE = Path(os.getenv("DATA_DIR", "/mnt/c/ws/consolidated-data-by-symbol")) / "tickers.json"
+DATA_FILE = Path(os.getenv("TICKERS_JSON_PATH", "/mnt/c/ws/stock-options-watchlist/tickers.json"))
 
 def load_tickers():
     """Load saved tickers from JSON file"""

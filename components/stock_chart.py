@@ -2,7 +2,7 @@ import yfinance as yf
 from streamlit_lightweight_charts import renderLightweightCharts
 import streamlit as st
 
-def render_stock_chart(
+def render_yf_pricing_chart(
     ticker: str,
     timeframe: str = "6mo",
     interval: str = "1d",
@@ -37,6 +37,7 @@ def render_stock_chart(
         ]
 
     chartOptions = {
+        "height": height,
         "layout": {
             "textColor": 'black',
             "background": {

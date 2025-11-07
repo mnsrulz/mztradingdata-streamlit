@@ -1,7 +1,8 @@
 import yfinance as yf
 import streamlit as st
-from components.stock_chart import render_stock_chart
+from components.stock_chart import render_yf_pricing_chart
 from utils.datastore import load_tickers, save_tickers
+from utils.utils import parse_option_ticker, render_footer
 
 st.set_page_config(
     page_title="Options Data Explorer",
@@ -62,7 +63,7 @@ def add_symbol_dialog():
                 if not opt_row.empty:
                     option_symbol = opt_row['contractSymbol'].values[0]
                     st.text(f"Actual Option Symbol: {option_symbol}")
-                    render_stock_chart(
+                    render_yf_pricing_chart(
                         option_symbol,
                         timeframe=timeframe,
                         interval=interval,
@@ -83,50 +84,64 @@ def add_symbol_dialog():
                                 if not add_another:                                    
                                     st.rerun()
 
-# --- Main UI ---
-if st.button("➕ Add Ticker"):
-    add_symbol_dialog()
+@st.dialog("Confirm Delete")
+def confirm_delete_ticker_dialog(ticker):
+    st.write(f"Are you sure you want to delete **{ticker}**?")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("✅ Yes"):
+            tickers.remove(ticker)
+            save_tickers(tickers)
+            st.rerun()    
 
-col1, col2 = st.columns(2)
+periodOptions = ["1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd", "max"]
+intervalOptions = ["1d", "1wk"]
+
+col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 3, 1])
 with col1:    
     chart_type = st.segmented_control(
-        "Chart Type", options=["Candlestick", "Line"], default="Candlestick"
+        "Chart Type", options=["Line", "Candlestick"], default="Line"
     )
 with col2:
     grid_option = st.segmented_control("Charts per row", ["1", "2", "3", "4"], default="3")
+    # grid_option = selected = st.selectbox("#Columns", ["1", "2", "3", "4"], label_visibility="collapsed", index=1)
 
-periodOptions = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd", "max"]
-intervalOptions = ["1d", "1wk"]
-
-col1, col2 = st.columns(2)
-with col1:
-    timeframe = st.segmented_control("Timeframe", options=periodOptions, default="6mo", selection_mode="single")
-with col2:
+with col3:
     interval = st.segmented_control("Interval", options=intervalOptions, default="1d", selection_mode="single")
+with col4:
+    timeframe = st.segmented_control("Timeframe", options=periodOptions, default="6mo", selection_mode="single")
+with col5:    
+    if st.button("➕ Add Ticker"):
+        add_symbol_dialog()
 
-st.divider()
+search_text = st.text_input("Search Tickers", "").upper()
+
+if search_text:
+    filtered_tickers = [t for t in tickers if search_text in t]
+else:
+    filtered_tickers = tickers
 
 n_cols = int(grid_option)
 
 # --- Display charts ---
 cols = st.columns(n_cols, gap="small")
-# tickers = ["COIN260116C00300000", "COIN260116P00300000"]
 
-for i, ticker in enumerate(tickers):
+for i, ticker in enumerate(filtered_tickers):
     col = cols[i % n_cols]
     with col:
         name_col, del_col = st.columns([4, 1])
         with name_col:
-            st.markdown(f"### {ticker}")
+            st.markdown(f"##### {parse_option_ticker(ticker)['display']}")
         with del_col:
             if st.button("🗑️", key=f"del_{ticker}"):
-                tickers.remove(ticker)
-                save_tickers(tickers)
-                st.rerun()
-        render_stock_chart(
+                confirm_delete_ticker_dialog(ticker)
+        render_yf_pricing_chart(
             ticker,
             timeframe=timeframe,
             interval=interval,
             chart_type=chart_type,
-            height=300
+            height=600/n_cols
         )
+
+
+render_footer()
